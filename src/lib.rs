@@ -3,5 +3,6 @@
 //! The binary in `main.rs` is a thin shell around this library so that both
 //! unit tests and the integration tests in `tests/` can exercise the logic.
 
+pub mod config;
 pub mod driver;
 pub mod wire;
