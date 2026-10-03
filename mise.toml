@@ -6,7 +6,20 @@ description = "Run the CLI (pass args after --)"
 run = "cargo run --"
 
 [tasks.test]
+description = "Unit + integration tests (live API tests stay ignored)"
 run = "cargo test"
+
+[tasks.test-unit]
+description = "Unit tests only (the #[cfg(test)] modules in src/)"
+run = "cargo test --lib --bins"
+
+[tasks.test-integration]
+description = "End-to-end tests of the binary against a fake server"
+run = "cargo test --test cli"
+
+[tasks.test-live]
+description = "Smoke tests against the real APIs (needs TYPESAFE_API_KEY / OPENROUTER_API_KEY)"
+run = "cargo test --test live -- --ignored"
 
 [tasks.lint]
 description = "Format check + clippy with warnings as errors"
