@@ -27,3 +27,7 @@ run = ["cargo fmt --check", "cargo clippy --all-targets -- -D warnings"]
 
 [tasks.fmt]
 run = "cargo fmt"
+
+[tasks.clean]
+description = "Delete build output in target/ (next build starts from scratch)"
+run = "cargo clean"

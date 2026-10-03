@@ -290,6 +290,7 @@ mise run test-live          # ignored live-API smoke tests; needs real API keys
 mise run lint               # cargo fmt --check + clippy -D warnings
 mise run fmt                # cargo fmt
 mise run run -- <args>      # cargo run -- <args>
+mise run clean              # cargo clean: free the disk space used by target/
 ```
 
 The test pyramid:
