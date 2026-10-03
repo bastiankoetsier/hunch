@@ -12,9 +12,22 @@ use clap::{Args, Parser, Subcommand};
 use crate::config::Overrides;
 use crate::driver::DriverKind;
 
+/// Help section for flags that apply to every subcommand, so `hunch noul
+/// --help` lists them apart from the subcommand's own options.
+const GLOBAL: &str = "Global options";
+
 /// Ask Jev (TypeSafe's System One model) for calibrated gut-check judgments.
 #[derive(Debug, Parser)]
-#[command(name = "hunch", version)]
+#[command(
+    name = "hunch",
+    version,
+    after_help = "\
+The state (the content to judge) comes from --state, --state-file, or stdin.
+JSON objects and arrays are sent as structured data, so results chain:
+
+  hunch --json choice \"Which team?\" -o billing -o sales --state \"...\" \\
+    | hunch noul \"Is `answers.answer.choice` billing?\""
+)]
 pub struct Cli {
     // A plain `//` comment on purpose: clap turns `///` doc comments into
     // help text, and this note is for readers of the code, not users.
@@ -25,23 +38,23 @@ pub struct Cli {
     // case-insensitive matching stay defined in exactly one place
     // (`DriverKind`), shared with `$HUNCH_DRIVER` and the config file.
     /// Provider to send the request through [possible values: typesafe, openrouter]
-    #[arg(long, global = true, value_name = "DRIVER")]
+    #[arg(long, global = true, value_name = "DRIVER", help_heading = GLOBAL)]
     pub driver: Option<DriverKind>,
 
     /// Model id (default: the driver's own default, e.g. jev-latest)
-    #[arg(long, global = true, value_name = "ID")]
+    #[arg(long, global = true, value_name = "ID", help_heading = GLOBAL)]
     pub model: Option<String>,
 
     /// Config file to read instead of ~/.config/hunch/config.toml
-    #[arg(long, global = true, value_name = "PATH")]
+    #[arg(long, global = true, value_name = "PATH", help_heading = GLOBAL)]
     pub config: Option<PathBuf>,
 
     /// Print the raw JSON response instead of a human-readable summary
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = GLOBAL)]
     pub json: bool,
 
     /// Print the model and token usage to stderr
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, help_heading = GLOBAL)]
     pub verbose: bool,
 
     #[command(subcommand)]
