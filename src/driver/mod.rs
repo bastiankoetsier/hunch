@@ -4,6 +4,8 @@
 //! knows whether it is hitting TypeSafe directly, going through OpenRouter, or
 //! talking to a test fake.
 
+pub mod retry;
+
 use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
@@ -20,6 +22,26 @@ pub trait Driver {
     fn default_model(&self) -> &str;
 
     fn evaluate(&self, request: &Request) -> Result<Evaluation, DriverError>;
+}
+
+/// A boxed driver is a driver too, so `Retry<Box<dyn Driver>>` works when the
+/// concrete driver is only chosen at runtime.
+///
+/// `?Sized` relaxes the implicit `D: Sized` bound: without it this impl would
+/// cover `Box<SomeDriver>` but not `Box<dyn Driver>`, because a trait object
+/// has no size known at compile time.
+impl<D: Driver + ?Sized> Driver for Box<D> {
+    fn name(&self) -> &'static str {
+        (**self).name()
+    }
+
+    fn default_model(&self) -> &str {
+        (**self).default_model()
+    }
+
+    fn evaluate(&self, request: &Request) -> Result<Evaluation, DriverError> {
+        (**self).evaluate(request)
+    }
 }
 
 /// The drivers hunch knows how to build. Selected via flag, env or config file.
