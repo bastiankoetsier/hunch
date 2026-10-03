@@ -1,0 +1,16 @@
+[tools]
+rust = "1.99"
+
+[tasks.run]
+description = "Run the CLI (pass args after --)"
+run = "cargo run --"
+
+[tasks.test]
+run = "cargo test"
+
+[tasks.lint]
+description = "Format check + clippy with warnings as errors"
+run = ["cargo fmt --check", "cargo clippy --all-targets -- -D warnings"]
+
+[tasks.fmt]
+run = "cargo fmt"
