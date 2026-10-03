@@ -135,6 +135,45 @@ impl fmt::Display for DriverError {
 
 impl std::error::Error for DriverError {}
 
+// Declared down here rather than at the top so this section stays a
+// self-contained, append-only block of the concrete drivers.
+mod http;
+pub mod openrouter;
+pub mod typesafe;
+
+pub use openrouter::OpenRouter;
+pub use typesafe::TypeSafe;
+
+/// What every driver needs to be built, regardless of provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverConfig {
+    pub api_key: String,
+    /// Overrides the provider's default base URL, e.g. to point at a local
+    /// fake server in tests. The `/v1/systemone` path is appended to it.
+    pub base_url: Option<String>,
+}
+
+impl DriverConfig {
+    /// The configured base URL or `default`, without trailing slashes so that
+    /// appending `/v1/...` never produces `//v1/...`.
+    pub(crate) fn base_url_or(&self, default: &str) -> String {
+        self.base_url
+            .as_deref()
+            .unwrap_or(default)
+            .trim_end_matches('/')
+            .to_string()
+    }
+}
+
+/// Builds the driver for `kind`. Returns a trait object so callers can pick
+/// the provider at runtime (flag, env, config) and treat them all alike.
+pub fn build(kind: DriverKind, config: DriverConfig) -> Box<dyn Driver> {
+    match kind {
+        DriverKind::TypeSafe => Box::new(TypeSafe::new(config)),
+        DriverKind::OpenRouter => Box::new(OpenRouter::new(config)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +192,32 @@ mod tests {
     fn display_round_trips_through_from_str() {
         for kind in DriverKind::ALL {
             assert_eq!(kind.to_string().parse(), Ok(kind));
+        }
+    }
+
+    fn config(base_url: Option<&str>) -> DriverConfig {
+        DriverConfig {
+            api_key: "key".into(),
+            base_url: base_url.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn base_url_falls_back_to_default_and_drops_trailing_slashes() {
+        assert_eq!(
+            config(None).base_url_or("https://x.test/"),
+            "https://x.test"
+        );
+        assert_eq!(
+            config(Some("http://127.0.0.1:1234/")).base_url_or("https://x.test"),
+            "http://127.0.0.1:1234"
+        );
+    }
+
+    #[test]
+    fn build_returns_the_requested_driver() {
+        for kind in DriverKind::ALL {
+            assert_eq!(build(kind, config(None)).name(), kind.as_str());
         }
     }
 }
