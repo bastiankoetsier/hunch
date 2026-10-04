@@ -1,5 +1,13 @@
 # hunch
 
+> [!WARNING]
+> **This is a personal learning project.** I built it to learn Rust, and I
+> don't promise maintenance, stability or support. Use it at your own risk:
+> it sends your input to third-party APIs that bill your API key. hunch is an
+> unofficial client and is not affiliated with or endorsed by TypeSafe or
+> OpenRouter. If you want the learning notes, see the
+> [learning map](docs/learning.md).
+
 A small CLI for [Jev](https://docs.typesafe.ai/introduction), TypeSafe's
 "System One" model. You give Jev a *state* (the content to judge) and one typed
 question; it answers with calibrated probabilities, not prose. hunch exposes the
@@ -26,12 +34,19 @@ System One answer is a hunch.
 - [Configure](#configure)
 - [Usage](#usage)
 - [Development](#development)
-- [Architecture / learning map](#architecture--learning-map)
+- [Architecture](#architecture)
+- [License](#license)
 
 ## Install
 
-The Rust toolchain (version plus the `rustfmt`/`clippy` components) is pinned in
-`mise.toml`:
+With a Rust toolchain already installed, install straight from GitHub:
+
+```sh
+cargo install --git https://github.com/bastiankoetsier/hunch
+```
+
+From a checkout, the Rust toolchain (version plus the `rustfmt`/`clippy`
+components) is pinned in `mise.toml`:
 
 ```sh
 mise install              # installs the pinned Rust toolchain
@@ -306,7 +321,7 @@ request: it installs the toolchain through `jdx/mise-action` (the same versions
 as locally), caches with `Swatinem/rust-cache`, then runs `mise run lint` and
 `mise run test`.
 
-## Architecture / learning map
+## Architecture
 
 `main.rs` is the only place that touches the real world (env, stdin, stdout,
 exit code). Everything else lives in the library (`lib.rs`) and is tested
@@ -339,20 +354,6 @@ flowchart LR
 | `src/driver/http.rs` | Shared HTTP transport and status-to-error mapping |
 | `src/driver/typesafe.rs`, `openrouter.rs` | Per-provider endpoint, headers, error-body parsing |
 
-### Rust concepts, and where to find them
+## License
 
-| Concept | Where to look | PR |
-| ------- | ------------- | -- |
-| Trait objects: `Box<dyn Driver>` picked at runtime; `&dyn Driver` vs `impl Driver` | `driver/mod.rs` (`build`), `app.rs` (`run` doc comment) | [#3](https://github.com/bastiankoetsier/hunch/pull/3), [#6](https://github.com/bastiankoetsier/hunch/pull/6) |
-| Generic decorator with a defaulted type parameter (`Retry<D, S = fn(Duration)>`) | `driver/retry.rs` | [#2](https://github.com/bastiankoetsier/hunch/pull/2) |
-| `?Sized` blanket impl so `Box<dyn Driver>` is itself a `Driver` | `driver/mod.rs` (`impl<D: Driver + ?Sized> Driver for Box<D>`) | [#2](https://github.com/bastiankoetsier/hunch/pull/2) |
-| Serde internally tagged enums (`#[serde(tag = "type")]`), `rename`, `skip_serializing_if` | `wire.rs` | [#1](https://github.com/bastiankoetsier/hunch/pull/1) |
-| Serde `untagged` enum for three error-body shapes | `driver/typesafe.rs` | [#3](https://github.com/bastiankoetsier/hunch/pull/3) |
-| Error enums: `Display`, `Error::source`, `From` so `?` converts | `driver/mod.rs`, `config.rs`, `app.rs` | [#1](https://github.com/bastiankoetsier/hunch/pull/1), [#4](https://github.com/bastiankoetsier/hunch/pull/4), [#6](https://github.com/bastiankoetsier/hunch/pull/6) |
-| Injecting the environment as a closure; why edition 2024 makes `std::env::set_var` `unsafe` | `config.rs` (module docs, `resolve`) | [#4](https://github.com/bastiankoetsier/hunch/pull/4) |
-| Precedence as an `Option::or_else` chain | `config.rs` (`resolve`) | [#4](https://github.com/bastiankoetsier/hunch/pull/4) |
-| clap derive: `#[command(flatten)]`, `global = true`, `help_heading`, custom `value_parser`, `FromStr` fallback | `cli.rs` | [#6](https://github.com/bastiankoetsier/hunch/pull/6) |
-| `impl Read` for testable input, `IsTerminal`, returning `ExitCode` from `main`, ignoring `BrokenPipe` | `app.rs` (`run`, `read_state`), `main.rs` | [#6](https://github.com/bastiankoetsier/hunch/pull/6) |
-| Let chains (`if a && let Ok(x) = ...`, edition 2024) | `app.rs` (`parse_state`) | [#6](https://github.com/bastiankoetsier/hunch/pull/6) |
-| Sorting floats with `total_cmp`; a struct borrowing with lifetimes (`Level<'a>`) | `render.rs` | [#6](https://github.com/bastiankoetsier/hunch/pull/6) |
-| Toolchain components drift: rustup's minimal profile on CI lacks `rustfmt`/`clippy`, so mise pins them | `mise.toml` | [#5](https://github.com/bastiankoetsier/hunch/pull/5) |
+[MIT](LICENSE).
