@@ -3,8 +3,7 @@
 hunch is a learning project: I built it to learn Rust. This page maps the Rust
 concepts it uses to the code and to the pull request that introduced them, so
 you can read each one in context. Paths are relative to `src/`. For how the
-pieces fit together, see [Architecture](../README.md#architecture) in the
-README.
+pieces fit together, see [Architecture](architecture.md).
 
 | Concept | Where to look | PR |
 | ------- | ------------- | -- |
