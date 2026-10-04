@@ -1,4 +1,5 @@
 [tools]
+cargo-dist = "0.33.0"
 rust = { version = "1.99", components = "rustfmt,clippy" }
 
 [tasks.run]
