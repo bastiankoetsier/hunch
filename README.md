@@ -319,6 +319,9 @@ in total, waiting 0.5s then 1s, or whatever the server's `Retry-After` says
 
 ## Development
 
+How the code is organised, module by module, is in
+[docs/architecture.md](docs/architecture.md).
+
 ```sh
 mise run test               # all non-ignored tests (unit + integration)
 mise run test-unit          # unit tests only
