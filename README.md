@@ -39,6 +39,29 @@ System One answer is a hunch.
 
 ## Install
 
+### Prebuilt binaries
+
+Each [GitHub release](https://github.com/bastiankoetsier/hunch/releases)
+ships binaries for macOS (Apple Silicon and Intel), Linux (x86_64 and arm64)
+and Windows (x86_64), plus an install script that picks the right one and puts
+it in `~/.cargo/bin`, without `sudo`:
+
+```sh
+# macOS and Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bastiankoetsier/hunch/releases/latest/download/hunch-installer.sh | sh
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/bastiankoetsier/hunch/releases/latest/download/hunch-installer.ps1 | iex"
+```
+
+Want to read the script first? Download it from the release page, or skip it
+and grab the archive for your platform there; each comes with a `.sha256`
+checksum.
+
+### From source
+
 With a Rust toolchain already installed, install straight from GitHub:
 
 ```sh
@@ -320,6 +343,31 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on every pull
 request: it installs the toolchain through `jdx/mise-action` (the same versions
 as locally), caches with `Swatinem/rust-cache`, then runs `mise run lint` and
 `mise run test`.
+
+### Releasing
+
+Releases are built by [dist](https://github.com/axodotdev/cargo-dist), pinned
+in `mise.toml` like the Rust toolchain. Its config lives in
+`dist-workspace.toml` and `[profile.dist]` in `Cargo.toml`; the workflow
+`.github/workflows/release.yml` is generated from that config, so don't edit
+it by hand: change the config and run `dist init` (or `dist generate`) again.
+
+To cut a release:
+
+1. Bump `version` in `Cargo.toml` (hunch reports it in `hunch --version`) and
+   merge that to `main`.
+2. Tag the merge commit with the same version and push the tag:
+   `git tag v0.2.0 && git push origin v0.2.0`.
+3. The release workflow builds every target on its own native runner and
+   publishes a GitHub release with the archives, checksums and install scripts.
+
+On pull requests the same workflow only runs `dist plan`, a quick check that
+the config and the generated workflow still agree. To try a build locally:
+
+```sh
+dist plan                                                 # what a release would contain
+dist build --artifacts=local --target aarch64-apple-darwin  # build one target into target/distrib/
+```
 
 ## Architecture
 
