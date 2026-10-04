@@ -2,7 +2,7 @@
 name = "hunch"
 version = "0.1.0"
 edition = "2024"
-description = "A small CLI for Jev, TypeSafe's System One model: calibrated yes/no, choice and score answers"
+description = "CLI for asking TypeSafe's Jev model yes/no, multiple-choice and scoring questions"
 license = "MIT"
 repository = "https://github.com/bastiankoetsier/hunch"
 
