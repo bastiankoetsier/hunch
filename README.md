@@ -346,6 +346,11 @@ request: it installs the toolchain through `jdx/mise-action` (the same versions
 as locally), caches with `Swatinem/rust-cache`, then runs `mise run lint` and
 `mise run test`.
 
+Dependabot (`.github/dependabot.yml`) opens monthly PRs for Cargo dependencies
+and GitHub Actions. Patch and minor updates are grouped and merge themselves
+once CI passes; major updates wait for review. The toolchain versions in
+`mise.toml` (Rust, dist) are not covered and stay manual.
+
 ### Releasing
 
 Releases are built by [dist](https://github.com/axodotdev/cargo-dist), pinned
