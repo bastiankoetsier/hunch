@@ -11,10 +11,6 @@ use serde::Serialize;
 use super::DriverError;
 use crate::wire::{Evaluation, Response};
 
-/// Upper bound for a whole request (connect + send + receive). Jev answers in
-/// seconds; anything near a minute means something is wrong.
-const TIMEOUT: Duration = Duration::from_secs(60);
-
 /// What came back from the server, before any provider-specific interpretation.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RawResponse {
@@ -33,19 +29,23 @@ pub(crate) type ExtractMessage = fn(&str) -> Option<String>;
 /// connection pool, so a driver holds one `Transport` for its whole lifetime.
 pub(crate) struct Transport {
     agent: ureq::Agent,
+    /// Kept to report it in [`DriverError::Timeout`].
+    timeout: Duration,
 }
 
 impl Transport {
-    pub fn new() -> Self {
+    /// `timeout` bounds each whole request: connect + send + receive.
+    pub fn new(timeout: Duration) -> Self {
         let config = ureq::Agent::config_builder()
             // ureq's default turns 4xx/5xx into `Err`, which would throw away
             // the status-specific body we need for good error messages.
             .http_status_as_error(false)
-            .timeout_global(Some(TIMEOUT))
+            .timeout_global(Some(timeout))
             .user_agent(concat!("hunch/", env!("CARGO_PKG_VERSION")))
             .build();
         Self {
             agent: ureq::Agent::new_with_config(config),
+            timeout,
         }
     }
 
@@ -75,7 +75,9 @@ impl Transport {
             request = request.header(*name, *value);
         }
 
-        let response = request.send(payload).map_err(transport_error)?;
+        let response = request
+            .send(payload)
+            .map_err(|error| self.transport_error(error))?;
 
         let status = response.status().as_u16();
         let retry_after = response
@@ -86,7 +88,7 @@ impl Transport {
         let body = response
             .into_body()
             .read_to_string()
-            .map_err(transport_error)?;
+            .map_err(|error| self.transport_error(error))?;
 
         Ok(RawResponse {
             status,
@@ -96,8 +98,17 @@ impl Transport {
     }
 }
 
-fn transport_error(error: ureq::Error) -> DriverError {
-    DriverError::Transport(error.to_string())
+impl Transport {
+    /// A timeout gets its own error: the server may well be reachable, it
+    /// just did not answer in time, which "could not reach" would misstate.
+    fn transport_error(&self, error: ureq::Error) -> DriverError {
+        match error {
+            ureq::Error::Timeout(_) => DriverError::Timeout {
+                after: self.timeout,
+            },
+            other => DriverError::Transport(other.to_string()),
+        }
+    }
 }
 
 /// Parses a `Retry-After` header given in whole seconds.

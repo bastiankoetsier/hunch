@@ -6,17 +6,18 @@
 //! errors and is easy to unit-test without going through clap.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::Overrides;
-use crate::driver::DriverKind;
+use crate::driver::{DEFAULT_TIMEOUT, DriverKind};
 
 /// Help section for flags that apply to every subcommand, so `hunch noul
 /// --help` lists them apart from the subcommand's own options.
 const GLOBAL: &str = "Global options";
 
-/// Ask Jev (TypeSafe's System One model) for calibrated gut-check judgments.
+/// Ask a decision model (TypeSafe's Jev by default) for calibrated gut-check judgments.
 #[derive(Debug, Parser)]
 #[command(
     name = "hunch",
@@ -57,11 +58,29 @@ pub struct Cli {
     #[arg(short, long, global = true, help_heading = GLOBAL)]
     pub verbose: bool,
 
+    // `range(1..)`: a zero timeout would fail every request, so clap rejects
+    // it as a usage error rather than letting it look like a provider outage.
+    /// Give up on a request after this many seconds
+    #[arg(
+        long,
+        global = true,
+        value_name = "SECS",
+        default_value_t = DEFAULT_TIMEOUT.as_secs(),
+        value_parser = clap::value_parser!(u64).range(1..),
+        help_heading = GLOBAL,
+    )]
+    pub timeout: u64,
+
     #[command(subcommand)]
     pub command: Command,
 }
 
 impl Cli {
+    /// `--timeout` as a `Duration`.
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout)
+    }
+
     /// The subset of flags that feed into layered configuration.
     pub fn overrides(&self) -> Overrides {
         Overrides {
@@ -89,12 +108,14 @@ pub struct NoulArgs {
     /// The yes/no question, e.g. "Does this convey urgency?"
     pub question: String,
 
-    /// What "yes" means (optional)
-    #[arg(long, value_name = "DESC")]
+    // `requires` both ways: OpenRouter's schema rejects criteria with only
+    // one side, so clap refuses that up front instead of the provider later.
+    /// What "yes" means (optional, needs --no)
+    #[arg(long, value_name = "DESC", requires = "no")]
     pub yes: Option<String>,
 
-    /// What "no" means (optional)
-    #[arg(long, value_name = "DESC")]
+    /// What "no" means (optional, needs --yes)
+    #[arg(long, value_name = "DESC", requires = "yes")]
     pub no: Option<String>,
 
     #[command(flatten)]
@@ -251,6 +272,32 @@ mod tests {
     fn rejects_unknown_driver() {
         let err = Cli::try_parse_from(["hunch", "--driver", "openai", "config"]).unwrap_err();
         assert!(err.to_string().contains("unknown driver `openai`"));
+    }
+
+    #[test]
+    fn timeout_defaults_to_ten_seconds_and_rejects_zero() {
+        let parse =
+            |extra: &[&str]| Cli::try_parse_from(["hunch"].iter().chain(extra).chain(&["config"]));
+        assert_eq!(parse(&[]).unwrap().timeout(), Duration::from_secs(10));
+        assert_eq!(
+            parse(&["--timeout", "30"]).unwrap().timeout(),
+            Duration::from_secs(30)
+        );
+        assert!(parse(&["--timeout", "0"]).is_err());
+        assert!(parse(&["--timeout", "soon"]).is_err());
+    }
+
+    #[test]
+    fn yes_and_no_come_together_or_not_at_all() {
+        let parse = |extra: &[&str]| {
+            Cli::try_parse_from(["hunch", "noul", "q"].iter().chain(extra))
+                .map_err(|err| err.kind())
+        };
+        assert!(parse(&[]).is_ok());
+        assert!(parse(&["--yes", "y", "--no", "n"]).is_ok());
+        let missing = Err(clap::error::ErrorKind::MissingRequiredArgument);
+        assert_eq!(parse(&["--yes", "y"]).map(|_| ()), missing);
+        assert_eq!(parse(&["--no", "n"]).map(|_| ()), missing);
     }
 
     #[test]

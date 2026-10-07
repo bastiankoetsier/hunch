@@ -1,8 +1,9 @@
-//! The driver abstraction: *how* a request reaches Jev.
+//! The driver abstraction: *how* a request reaches a decision model.
 //!
 //! Everything above this module (CLI, rendering) talks to `dyn Driver` and never
 //! knows whether it is hitting TypeSafe directly, going through OpenRouter, or
-//! talking to a test fake.
+//! talking to a test fake. *Which* model answers is not a driver concern: it
+//! is the request's `model` field, so one driver can serve several models.
 
 pub mod retry;
 
@@ -12,7 +13,7 @@ use std::time::Duration;
 
 use crate::wire::{Evaluation, Request};
 
-/// Something that can evaluate a [`Request`] against Jev.
+/// Something that can evaluate a [`Request`] against a decision model.
 pub trait Driver {
     /// Short identifier, e.g. `"typesafe"`. Used in error messages.
     fn name(&self) -> &'static str;
@@ -110,8 +111,11 @@ pub enum DriverError {
     Overloaded,
     /// Any other non-success status.
     Api { status: u16, message: String },
-    /// Could not reach the server (DNS, TLS, connection refused, timeout).
+    /// Could not reach the server (DNS, TLS, connection refused).
     Transport(String),
+    /// No complete response within the configured timeout. Not retried:
+    /// a provider that hung once would most likely hang again.
+    Timeout { after: Duration },
     /// The server answered 2xx but the body was not a valid response.
     Decode(String),
 }
@@ -128,6 +132,9 @@ impl fmt::Display for DriverError {
             DriverError::Overloaded => f.write_str("provider is overloaded, try again shortly"),
             DriverError::Api { status, message } => write!(f, "HTTP {status}: {message}"),
             DriverError::Transport(message) => write!(f, "could not reach provider: {message}"),
+            DriverError::Timeout { after } => {
+                write!(f, "provider did not answer within {}s", after.as_secs())
+            }
             DriverError::Decode(message) => write!(f, "unexpected response body: {message}"),
         }
     }
@@ -149,9 +156,17 @@ pub use typesafe::TypeSafe;
 pub struct DriverConfig {
     pub api_key: String,
     /// Overrides the provider's default base URL, e.g. to point at a local
-    /// fake server in tests. The `/v1/systemone` path is appended to it.
+    /// fake server in tests. Each driver appends its own endpoint path
+    /// (`/v1/systemone`, `/alpha/decisions`) to it.
     pub base_url: Option<String>,
+    /// Upper bound for one whole request (connect + send + receive).
+    pub timeout: Duration,
 }
+
+/// How long one request may take unless `--timeout` says otherwise. Decision
+/// models answer in about a second; ten is plenty, and short enough that a
+/// provider that never answers fails fast instead of looking like a hang.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl DriverConfig {
     /// The configured base URL or `default`, without trailing slashes so that
@@ -199,6 +214,7 @@ mod tests {
         DriverConfig {
             api_key: "key".into(),
             base_url: base_url.map(str::to_string),
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 

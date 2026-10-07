@@ -21,7 +21,7 @@ impl TypeSafe {
         Self {
             endpoint: format!("{}/v1/systemone", config.base_url_or(DEFAULT_BASE_URL)),
             api_key: config.api_key,
-            transport: Transport::new(),
+            transport: Transport::new(config.timeout),
         }
     }
 }
@@ -112,6 +112,7 @@ mod tests {
         DriverConfig {
             api_key: "sk-test".into(),
             base_url: base_url.map(str::to_string),
+            timeout: crate::driver::DEFAULT_TIMEOUT,
         }
     }
 

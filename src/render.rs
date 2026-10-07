@@ -29,6 +29,7 @@ pub fn answer(answer: &Answer) -> String {
             probabilities,
             confidence,
         } => self::score(*score, legend, probabilities, *confidence),
+        Answer::Refusal => "refused: the model declined to answer\n".to_string(),
     }
 }
 
@@ -52,7 +53,14 @@ pub fn noul(probability: f64) -> String {
 ///   technical  █████████████████░░░   85.0%
 ///   billing    ███░░░░░░░░░░░░░░░░░   15.0%
 /// ```
-pub fn choice(choice: &str, probabilities: &BTreeMap<String, f64>, confidence: f64) -> String {
+///
+/// Not every model reports a confidence or a distribution; whichever is
+/// missing is left out.
+pub fn choice(
+    choice: &str,
+    probabilities: &BTreeMap<String, f64>,
+    confidence: Option<f64>,
+) -> String {
     let mut rows: Vec<(&str, f64)> = probabilities
         .iter()
         .map(|(name, p)| (name.as_str(), *p))
@@ -62,11 +70,9 @@ pub fn choice(choice: &str, probabilities: &BTreeMap<String, f64>, confidence: f
     // ties keep the alphabetical order the `BTreeMap` iterated in.
     rows.sort_by(|a, b| b.1.total_cmp(&a.1));
 
-    let mut out = format!("{choice}  (confidence {confidence:.2})\n\n");
+    let mut out = format!("{choice}{}\n", confidence_suffix(confidence));
     let width = label_width(rows.iter().map(|(name, _)| *name));
-    for (name, p) in rows {
-        out += &row(name, width, p);
-    }
+    out += &table(rows.into_iter().map(|(name, p)| row(name, width, p)));
     out
 }
 
@@ -84,7 +90,7 @@ pub fn score(
     score: f64,
     legend: &BTreeMap<String, String>,
     probabilities: &BTreeMap<String, f64>,
-    confidence: f64,
+    confidence: Option<f64>,
 ) -> String {
     let levels = sorted_levels(legend);
 
@@ -95,17 +101,17 @@ pub fn score(
     if let Some(nearest) = nearest_level(&levels, score) {
         out += &format!(" → {}", nearest.description);
     }
-    out += &format!("  (confidence {confidence:.2})\n\n");
+    out += &format!("{}\n", confidence_suffix(confidence));
 
     let labels: Vec<String> = levels
         .iter()
         .map(|level| format!("{}  {}", level.key, level.description))
         .collect();
     let width = label_width(labels.iter().map(String::as_str));
-    for (level, label) in levels.iter().zip(&labels) {
+    out += &table(levels.iter().zip(&labels).map(|(level, label)| {
         let p = probabilities.get(level.key).copied().unwrap_or(0.0);
-        out += &row(label, width, p);
-    }
+        row(label, width, p)
+    }));
     out
 }
 
@@ -123,6 +129,24 @@ pub fn usage(response: &Response) -> String {
 pub fn bar(fraction: f64) -> String {
     let filled = (fraction.clamp(0.0, 1.0) * BAR_WIDTH as f64).round() as usize;
     "█".repeat(filled) + &"░".repeat(BAR_WIDTH - filled)
+}
+
+/// `  (confidence 0.78)`, or nothing when the model reported none.
+fn confidence_suffix(confidence: Option<f64>) -> String {
+    confidence
+        .map(|confidence| format!("  (confidence {confidence:.2})"))
+        .unwrap_or_default()
+}
+
+/// The rows below a headline, set off by a blank line; nothing at all when
+/// there are no rows, so the output never ends in a dangling blank line.
+fn table(rows: impl Iterator<Item = String>) -> String {
+    let rows: String = rows.collect();
+    if rows.is_empty() {
+        rows
+    } else {
+        format!("\n{rows}")
+    }
 }
 
 /// `  label    ███░░…   15.0%`, with the label padded to `width`.
@@ -219,7 +243,7 @@ mod tests {
             "",
         ]
         .join("\n");
-        assert_eq!(choice("technical", &probabilities, 0.78), expected);
+        assert_eq!(choice("technical", &probabilities, Some(0.78)), expected);
     }
 
     #[test]
@@ -236,7 +260,7 @@ mod tests {
             "",
         ]
         .join("\n");
-        assert_eq!(score(1.05, &legend, &probabilities, 0.92), expected);
+        assert_eq!(score(1.05, &legend, &probabilities, Some(0.92)), expected);
     }
 
     #[test]
@@ -250,10 +274,19 @@ mod tests {
             ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
         );
 
-        let out = score(9.7, &legend, &BTreeMap::new(), 0.5);
+        let out = score(9.7, &legend, &BTreeMap::new(), Some(0.5));
         assert!(out.starts_with("9.70 on a 0–10 scale → L10"), "{out}");
         let last_row = out.lines().last().unwrap();
         assert!(last_row.trim_start().starts_with("10  L10"), "{last_row}");
+    }
+
+    #[test]
+    fn sparse_answers_render_just_the_headline() {
+        assert_eq!(choice("billing", &BTreeMap::new(), None), "billing\n");
+        assert_eq!(
+            score(1.1, &BTreeMap::new(), &BTreeMap::new(), Some(0.55)),
+            "1.10  (confidence 0.55)\n"
+        );
     }
 
     #[test]

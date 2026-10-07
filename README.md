@@ -4,15 +4,17 @@
 > **This is a personal learning project.** I built it to learn Rust, and I
 > don't promise maintenance, stability or support. Use it at your own risk:
 > it sends your input to third-party APIs that bill your API key. hunch is an
-> unofficial client and is not affiliated with or endorsed by TypeSafe or
-> OpenRouter. If you want the learning notes, see the
+> unofficial client and is not affiliated with or endorsed by TypeSafe,
+> OpenRouter or OpenAI. If you want the learning notes, see the
 > [learning map](docs/learning.md).
 
 A small CLI for [Jev](https://docs.typesafe.ai/introduction), TypeSafe's
 "System One" model. You give Jev a *state* (the content to judge) and one typed
 question; it answers with calibrated probabilities, not prose. hunch exposes the
 three question types as three subcommands: `noul` (yes/no), `choice` (pick one)
-and `score` (place on a scale).
+and `score` (place on a scale). Through OpenRouter, the same subcommands also
+work with [other decision models](#other-decision-models), such as OpenAI's
+GPT-6 Luna Decisions.
 
 ```console
 $ hunch noul "Does the customer convey urgency?" \
@@ -97,10 +99,20 @@ hunch noul "Is this spam?" --state "You won a prize!"
 
 ### Drivers and precedence
 
-A *driver* is the route a request takes to Jev: `typesafe` talks to TypeSafe
-directly, `openrouter` goes through OpenRouter. Both speak the same
-`POST /v1/systemone` protocol. Every setting is resolved left to right, first
-hit wins; empty values count as unset.
+A *driver* is the route a request takes to the model: `typesafe` talks to
+TypeSafe directly (`POST /v1/systemone`), `openrouter` goes through
+OpenRouter's Decisions router (`POST /api/alpha/decisions`). Both take the same
+request format. Every setting is resolved left to right, first hit wins; empty
+values count as unset.
+
+> [!CAUTION]
+> **The `openrouter` driver uses an alpha endpoint.** OpenRouter lists its
+> [Decisions router](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request)
+> under `/api/alpha/`, so its request format, answers or availability may
+> change without notice, and hunch may break until it catches up. If
+> `--driver openrouter` suddenly fails with a 404 or a validation error, that
+> is the likely cause. For Jev, the `typesafe` driver uses TypeSafe's stable
+> API and is not affected.
 
 | Setting     | 1. flag    | 2. environment                              | 3. config file                     | 4. default                   |
 | ----------- | ---------- | ------------------------------------------- | ---------------------------------- | ---------------------------- |
@@ -113,6 +125,41 @@ hit wins; empty values count as unset.
 Driver names are case-insensitive. A missing config file at the default
 location is fine; a missing file you named with `--config` or `HUNCH_CONFIG` is
 an error.
+
+### Other decision models
+
+OpenRouter's Decisions router ([an alpha endpoint](#drivers-and-precedence))
+serves every decision model on OpenRouter in the same request format, so with
+the `openrouter` driver the model id alone picks which one answers. For
+example, OpenAI's
+[GPT-6 Luna Decisions](https://developers.openai.com/api/docs/guides/decisions):
+
+```console
+$ hunch --driver openrouter --model openai/gpt-6-luna-decisions \
+    score "How friendly?" -l Hostile -l Neutral -l Warm --state "Hello there!"
+1.98 on a 0–2 scale → Warm  (confidence 0.97)
+
+  0  Hostile  ░░░░░░░░░░░░░░░░░░░░    0.0%
+  1  Neutral  ░░░░░░░░░░░░░░░░░░░░    2.0%
+  2  Warm     ████████████████████   98.0%
+```
+
+To make it the default, set `model = "openai/gpt-6-luna-decisions"` under
+`[openrouter]` in the config file. OpenRouter translates to and from OpenAI's
+own Decisions format, which maps onto hunch like this:
+
+| OpenAI Decisions API                       | hunch                                  |
+| ------------------------------------------ | -------------------------------------- |
+| `predicate` question, `probability` answer | `noul`, P(yes)                         |
+| `choice` with `choices[].description`      | `choice` with `-o NAME=DESC`           |
+| `score` with ordered `levels`              | `score` with `-l LEVEL`, lowest first  |
+| `input` as text                            | the state, as text or structured JSON  |
+| `refusal` answer                           | error, exit code 1                     |
+
+Not supported: image input (OpenRouter does not document how to send images in
+the state yet), several questions in one call (hunch asks one at a time by
+design), and a separate description per score level. The option and level
+limits (2 to 255, 2 to 10) are Jev's; hunch checks them for every model.
 
 ### Config file
 
@@ -169,6 +216,7 @@ Global options:
       --config <PATH>    Config file to read instead of ~/.config/hunch/config.toml
       --json             Print the raw JSON response instead of a human-readable summary
   -v, --verbose          Print the model and token usage to stderr
+      --timeout <SECS>   Give up on a request after this many seconds [default: 10]
 ```
 
 Global options work before or after the subcommand (`hunch --json noul ...` and
@@ -191,9 +239,12 @@ T="I was charged twice for my March invoice and nobody answers my emails. Fix th
 
 ```text
 hunch noul [OPTIONS] <QUESTION>
-      --yes <DESC>  What "yes" means (optional)
-      --no <DESC>   What "no" means (optional)
+      --yes <DESC>  What "yes" means (optional, needs --no)
+      --no <DESC>   What "no" means (optional, needs --yes)
 ```
+
+Describe both sides or neither: `--yes` without `--no` (or the reverse) is a
+usage error.
 
 ```console
 $ hunch noul "Does the customer convey urgency?" --state "$T"
@@ -310,12 +361,13 @@ urgency=$(hunch --json noul "Does the customer convey urgency?" --state "$T" \
 | Code | Meaning |
 | ---- | ------- |
 | 0    | Success, including `--help`, `--version`, and a reader closing the pipe early (`\| head -c1`) |
-| 1    | Runtime failure: the provider call failed (after retries), the response had no answer, or output could not be written |
+| 1    | Runtime failure: the provider call failed (after retries), the response had no answer, the model declined to answer, or output could not be written |
 | 2    | Something to fix in the invocation: bad arguments (clap), wrong option/level count, duplicate option, bad config or missing API key, missing/empty/unreadable state |
 
 Rate limits (429) and overload (503/529) are retried automatically: 3 attempts
 in total, waiting 0.5s then 1s, or whatever the server's `Retry-After` says
-(capped at 8s). Each request times out after 60s.
+(capped at 8s). Each request times out after 10s; raise that with
+`--timeout SECS`. A timeout is not retried and exits with 1.
 
 ## Development
 

@@ -43,6 +43,7 @@ fn run(cli: &Cli) -> Result<(), AppError> {
         DriverConfig {
             api_key: settings.api_key,
             base_url: settings.base_url,
+            timeout: cli.timeout(),
         },
     ));
 
