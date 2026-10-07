@@ -1,5 +1,14 @@
-//! Reaches Jev through OpenRouter, which proxies the same `/v1/systemone`
-//! endpoint but has its own model naming, error format and headers.
+//! Reaches decision models through OpenRouter's Decisions router.
+//!
+//! The router takes the same request format as TypeSafe's `/v1/systemone`,
+//! for every decision model OpenRouter serves: Jev, but also models with
+//! their own native API, such as OpenAI's GPT-6 Luna Decisions, which
+//! OpenRouter translates to and from OpenAI's format. So one driver covers
+//! all of them, and the model id alone picks which one answers.
+//!
+//! OpenRouter also proxies `/v1/systemone` itself, but documents that path
+//! for TypeSafe SDK compatibility; the router is the one it documents for
+//! plain HTTP clients like this one.
 
 use serde::Deserialize;
 
@@ -26,9 +35,9 @@ pub struct OpenRouter {
 impl OpenRouter {
     pub fn new(config: DriverConfig) -> Self {
         Self {
-            endpoint: format!("{}/v1/systemone", config.base_url_or(DEFAULT_BASE_URL)),
+            endpoint: format!("{}/alpha/decisions", config.base_url_or(DEFAULT_BASE_URL)),
             api_key: config.api_key,
-            transport: Transport::new(),
+            transport: Transport::new(config.timeout),
         }
     }
 }
@@ -78,6 +87,7 @@ mod tests {
         DriverConfig {
             api_key: "sk-or-test".into(),
             base_url: base_url.map(str::to_string),
+            timeout: crate::driver::DEFAULT_TIMEOUT,
         }
     }
 
@@ -86,13 +96,13 @@ mod tests {
         let driver = OpenRouter::new(config(None));
         assert_eq!(driver.name(), "openrouter");
         assert_eq!(driver.default_model(), "~typesafe/jev-latest");
-        assert_eq!(driver.endpoint, "https://openrouter.ai/api/v1/systemone");
+        assert_eq!(driver.endpoint, "https://openrouter.ai/api/alpha/decisions");
     }
 
     #[test]
     fn base_url_override_drops_trailing_slash() {
         let driver = OpenRouter::new(config(Some("http://127.0.0.1:9000//")));
-        assert_eq!(driver.endpoint, "http://127.0.0.1:9000/v1/systemone");
+        assert_eq!(driver.endpoint, "http://127.0.0.1:9000/alpha/decisions");
     }
 
     #[test]

@@ -1,7 +1,10 @@
-//! Wire types for Jev's `POST /v1/systemone` endpoint.
+//! Wire types for the System One request format.
 //!
-//! These mirror the HTTP API reference (<https://docs.typesafe.ai/api>) and are
-//! shared by every driver: TypeSafe and OpenRouter speak the same protocol.
+//! These mirror TypeSafe's HTTP API reference (<https://docs.typesafe.ai/api>)
+//! for `POST /v1/systemone`, and are shared by every driver: OpenRouter's
+//! Decisions router (`POST /api/alpha/decisions`) accepts the same format for
+//! every decision model it serves. For models with a different native API,
+//! such as OpenAI's GPT-6 Luna Decisions, OpenRouter translates on its side.
 
 use std::collections::BTreeMap;
 
@@ -40,13 +43,14 @@ pub enum Question {
     },
 }
 
-/// Optional descriptions of what "yes" and "no" mean for a Noul.
+/// What "yes" and "no" mean for a Noul. Both sides, always: TypeSafe would
+/// accept one, but OpenRouter's Decisions schema requires both.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoulCriteria {
-    #[serde(rename = "true", skip_serializing_if = "Option::is_none")]
-    pub yes: Option<String>,
-    #[serde(rename = "false", skip_serializing_if = "Option::is_none")]
-    pub no: Option<String>,
+    #[serde(rename = "true")]
+    pub yes: String,
+    #[serde(rename = "false")]
+    pub no: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -57,6 +61,11 @@ pub struct Response {
     pub usage: Usage,
 }
 
+/// An answer, discriminated by its `type` field on the wire.
+///
+/// TypeSafe always sends every field. OpenRouter's Decisions schema, shared
+/// by every model it routes to, only requires the chosen value and the
+/// score, so the rest may be missing.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Answer {
@@ -65,15 +74,21 @@ pub enum Answer {
     },
     Choice {
         choice: String,
+        #[serde(default)]
         probabilities: BTreeMap<String, f64>,
-        confidence: f64,
+        confidence: Option<f64>,
     },
     Score {
         score: f64,
+        #[serde(default)]
         legend: BTreeMap<String, String>,
+        #[serde(default)]
         probabilities: BTreeMap<String, f64>,
-        confidence: f64,
+        confidence: Option<f64>,
     },
+    /// The model declined to answer. OpenAI's Decisions API can return this
+    /// for any question; TypeSafe's API has no such answer type.
+    Refusal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -143,13 +158,17 @@ mod tests {
         let question = Question::Noul {
             instructions: "Urgent?".into(),
             criteria: Some(NoulCriteria {
-                yes: Some("Time-sensitive".into()),
-                no: None,
+                yes: "Time-sensitive".into(),
+                no: "Can wait".into(),
             }),
         };
         assert_eq!(
             serde_json::to_value(&question).unwrap(),
-            json!({ "type": "noul", "instructions": "Urgent?", "criteria": { "true": "Time-sensitive" } })
+            json!({
+                "type": "noul",
+                "instructions": "Urgent?",
+                "criteria": { "true": "Time-sensitive", "false": "Can wait" }
+            })
         );
     }
 
@@ -187,5 +206,54 @@ mod tests {
                 output_tokens: 65
             }
         );
+    }
+
+    #[test]
+    fn deserializes_an_openrouter_decisions_response() {
+        // OpenRouter adds `id`, `provider` and `usage.cost`; we ignore them.
+        let body = r#"{
+            "id": "gen-dec-1789738314-X5e5eKGQdvR9rblyX250",
+            "model": "openai/gpt-6-luna-decisions-20261006",
+            "provider": "OpenAI",
+            "answers": { "is_bug": { "type": "noul", "noul": 0.96 } },
+            "usage": { "cost": 0.000019992, "input_tokens": 476, "output_tokens": 70 }
+        }"#;
+
+        let response: Response = serde_json::from_str(body).unwrap();
+
+        assert_eq!(response.model, "openai/gpt-6-luna-decisions-20261006");
+        assert_eq!(response.answers["is_bug"], Answer::Noul { noul: 0.96 });
+    }
+
+    #[test]
+    fn choice_and_score_need_only_their_value() {
+        let choice: Answer =
+            serde_json::from_str(r#"{"type":"choice","choice":"billing"}"#).unwrap();
+        assert_eq!(
+            choice,
+            Answer::Choice {
+                choice: "billing".into(),
+                probabilities: BTreeMap::new(),
+                confidence: None,
+            }
+        );
+
+        let score: Answer = serde_json::from_str(r#"{"type":"score","score":1.1}"#).unwrap();
+        assert_eq!(
+            score,
+            Answer::Score {
+                score: 1.1,
+                legend: BTreeMap::new(),
+                probabilities: BTreeMap::new(),
+                confidence: None,
+            }
+        );
+    }
+
+    #[test]
+    fn deserializes_a_refusal_ignoring_extra_fields() {
+        let refusal: Answer =
+            serde_json::from_str(r#"{"type":"refusal","name":"answer"}"#).unwrap();
+        assert_eq!(refusal, Answer::Refusal);
     }
 }

@@ -47,7 +47,8 @@ fn noul_sends_the_request_and_prints_a_bar() {
 
     let outcome = typesafe(&server)
         .args(["--driver", "typesafe", "noul", "Does this convey urgency?"])
-        .args(["--yes", "Time-sensitive", "--state", "Help! Payouts fail."])
+        .args(["--yes", "Time-sensitive", "--no", "Can wait"])
+        .args(["--state", "Help! Payouts fail."])
         .run();
 
     assert_eq!(
@@ -74,7 +75,7 @@ fn noul_sends_the_request_and_prints_a_bar() {
                 "answer": {
                     "type": "noul",
                     "instructions": "Does this convey urgency?",
-                    "criteria": { "true": "Time-sensitive" }
+                    "criteria": { "true": "Time-sensitive", "false": "Can wait" }
                 }
             }
         })
@@ -164,7 +165,7 @@ fn score_sends_levels_in_order_and_prints_the_nearest_level() {
 /// Checks that a request went through the OpenRouter driver.
 fn assert_openrouter(server: &FakeServer) {
     let request = server.single_request();
-    assert_eq!(request.path, "/v1/systemone");
+    assert_eq!(request.path, "/alpha/decisions");
     assert_eq!(request.header("Authorization"), Some("Bearer or-test-key"));
     assert_eq!(request.json()["model"], "~typesafe/jev-latest");
     assert_eq!(request.header("X-Title"), Some("hunch"));
@@ -207,6 +208,85 @@ fn openrouter_via_config_file() {
         .run()
         .success();
     assert_openrouter(&server);
+}
+
+// --- other decision models through OpenRouter ------------------------------------
+
+/// GPT-6 Luna Decisions as OpenRouter's Decisions router returns it: the
+/// System One answer format, plus `id`, `provider` and `usage.cost`.
+const LUNA_SCORE_BODY: &str = r#"{"id":"gen-dec-1791321600-abc","model":"openai/gpt-6-luna-decisions-20261006","provider":"OpenAI","answers":{"answer":{"type":"score","score":1.1,"legend":{"0":"Cosmetic","1":"Workaround available","2":"Fully blocked"},"probabilities":{"0":0.1,"1":0.7,"2":0.2},"confidence":0.55}},"usage":{"cost":0.0000412,"input_tokens":412,"output_tokens":0}}"#;
+
+#[test]
+fn openai_luna_decisions_through_openrouter() {
+    let server = FakeServer::start([ok(LUNA_SCORE_BODY)]);
+
+    let outcome = both_keys(&server)
+        .args([
+            "--driver",
+            "openrouter",
+            "--model",
+            "openai/gpt-6-luna-decisions",
+        ])
+        .args(["score", "How severe is this issue?"])
+        .args([
+            "-l",
+            "Cosmetic",
+            "-l",
+            "Workaround available",
+            "-l",
+            "Fully blocked",
+        ])
+        .args(["--state", "Export fails in Safari but works in Chrome."])
+        .run();
+
+    assert_eq!(
+        outcome.success(),
+        [
+            "1.10 on a 0–2 scale → Workaround available  (confidence 0.55)",
+            "",
+            "  0  Cosmetic              ██░░░░░░░░░░░░░░░░░░   10.0%",
+            "  1  Workaround available  ██████████████░░░░░░   70.0%",
+            "  2  Fully blocked         ████░░░░░░░░░░░░░░░░   20.0%",
+            "",
+        ]
+        .join("\n")
+    );
+
+    // Same driver, same request format as for Jev; only the model differs.
+    let request = server.single_request();
+    assert_eq!(request.path, "/alpha/decisions");
+    assert_eq!(request.header("Authorization"), Some("Bearer or-test-key"));
+    assert_eq!(
+        request.json(),
+        json!({
+            "state": "Export fails in Safari but works in Chrome.",
+            "model": "openai/gpt-6-luna-decisions",
+            "questions": { "answer": {
+                "type": "score",
+                "instructions": "How severe is this issue?",
+                "criteria": ["Cosmetic", "Workaround available", "Fully blocked"]
+            } }
+        })
+    );
+}
+
+#[test]
+fn a_refusal_exits_1_and_prints_nothing() {
+    let server = FakeServer::start([ok(
+        r#"{"model":"openai/gpt-6-luna-decisions-20261006","answers":{"answer":{"type":"refusal"}},"usage":{"input_tokens":9,"output_tokens":0}}"#,
+    )]);
+    let outcome = both_keys(&server)
+        .args([
+            "--driver",
+            "openrouter",
+            "--model",
+            "openai/gpt-6-luna-decisions",
+        ])
+        .args(["noul", "q", "--state", "x"])
+        .run();
+    let stderr = outcome.failure(1);
+    assert!(stderr.contains("declined to answer"), "{stderr}");
+    assert_eq!(outcome.stdout, "");
 }
 
 // --- precedence: flag > env > file > default ----------------------------------
@@ -507,6 +587,33 @@ fn unreachable_server_exits_1() {
 }
 
 #[test]
+fn a_server_that_never_answers_times_out_after_timeout_seconds() {
+    // Bound but never accepted: the OS still completes the TCP handshake
+    // (the connection waits in the listen backlog), so hunch connects, sends
+    // its request, and then waits for a reply that never comes.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", silent.local_addr().unwrap());
+
+    let started = std::time::Instant::now();
+    let outcome = Hunch::new()
+        .env("TYPESAFE_API_KEY", TYPESAFE_KEY)
+        .env("TYPESAFE_BASE_URL", &url)
+        .args(["--timeout", "1", "noul", "q", "--state", "x"])
+        .run();
+    let elapsed = started.elapsed();
+
+    let stderr = outcome.failure(1);
+    assert!(
+        stderr.contains("did not answer within 1s (wait longer with --timeout SECS)"),
+        "{stderr}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "took {elapsed:?}, so --timeout 1 was not applied"
+    );
+}
+
+#[test]
 fn choice_with_one_option_exits_2_without_a_request() {
     let server = FakeServer::start([ok(CHOICE_BODY)]);
     let outcome = typesafe(&server)
@@ -514,6 +621,19 @@ fn choice_with_one_option_exits_2_without_a_request() {
         .run();
     let stderr = outcome.failure(2);
     assert!(stderr.contains("2 to 255 options"), "{stderr}");
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn noul_yes_without_no_exits_2_without_a_request() {
+    let server = FakeServer::start([ok(NOUL_BODY)]);
+    let outcome = both_keys(&server)
+        .args(["--driver", "openrouter", "noul", "Is this a greeting?"])
+        .args(["--yes", "Says hello", "--state", "Hello there!"])
+        .run();
+    // A clap usage error, so no `hunch: error:` prefix (`failure` expects one).
+    assert_eq!(outcome.code, Some(2), "{outcome:?}");
+    assert!(outcome.stderr.contains("--no <DESC>"), "{outcome:?}");
     assert!(server.requests().is_empty());
 }
 

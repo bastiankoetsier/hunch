@@ -14,11 +14,19 @@ mod support;
 use serde_json::Value;
 use support::Hunch;
 
+/// The real key from `key_var`, or `None` (after saying so) to skip the test.
+fn key(key_var: &str, test: &str) -> Option<String> {
+    let key = std::env::var(key_var).ok().filter(|key| !key.is_empty());
+    if key.is_none() {
+        eprintln!("skipping the live {test} test: ${key_var} is not set");
+    }
+    key
+}
+
 /// Asks one cheap noul question through `driver` and checks the shape of
 /// the answer, not its value (the model's judgment is not ours to test).
 fn smoke(driver: &str, key_var: &str) {
-    let Some(key) = std::env::var(key_var).ok().filter(|key| !key.is_empty()) else {
-        eprintln!("skipping the live {driver} test: ${key_var} is not set");
+    let Some(key) = key(key_var, driver) else {
         return;
     };
 
@@ -45,4 +53,42 @@ fn live_typesafe() {
 #[ignore = "hits the live API; run with mise run test-live"]
 fn live_openrouter() {
     smoke("openrouter", "OPENROUTER_API_KEY");
+}
+
+/// OpenAI's GPT-6 Luna Decisions, which OpenRouter translates from OpenAI's
+/// own format into the System One one. Every question type, rendered for
+/// humans, so a translated answer hunch cannot decode fails here.
+#[test]
+#[ignore = "hits the live API; run with mise run test-live"]
+fn live_openrouter_gpt_6_luna_decisions() {
+    let Some(key) = key("OPENROUTER_API_KEY", "GPT-6 Luna Decisions") else {
+        return;
+    };
+
+    // (subcommand, question, its options or levels)
+    let questions: [(&str, &str, &[&str]); 3] = [
+        ("noul", "Is this a greeting?", &[]),
+        (
+            "choice",
+            "What kind of message?",
+            &["-o", "greeting", "-o", "other"],
+        ),
+        (
+            "score",
+            "How friendly?",
+            &["-l", "Hostile", "-l", "Neutral", "-l", "Warm"],
+        ),
+    ];
+    for (subcommand, question, options) in questions {
+        let outcome = Hunch::new()
+            .env("OPENROUTER_API_KEY", &key)
+            .args(["--driver", "openrouter"])
+            .args(["--model", "openai/gpt-6-luna-decisions"])
+            .args([subcommand, question])
+            .args(options.iter().copied())
+            .args(["--state", "Hello there!"])
+            .run();
+        // Printed for `--nocapture`; the answer's value is not ours to test.
+        eprintln!("{}", outcome.success());
+    }
 }

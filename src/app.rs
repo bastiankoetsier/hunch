@@ -18,7 +18,7 @@ use crate::cli::{ChoiceArgs, Cli, Command, NoulArgs, ScoreArgs, StateArgs};
 use crate::config::{self, ConfigError, Overrides};
 use crate::driver::{self, Driver, DriverError, DriverKind};
 use crate::render;
-use crate::wire::{NoulCriteria, Question, Request};
+use crate::wire::{Answer, NoulCriteria, Question, Request};
 
 /// Every request carries exactly one question, under this id. It is also
 /// where the answer sits in `--json` output, so chained calls can reference
@@ -76,6 +76,12 @@ pub fn run(
     let request = build_request(question, state, model);
 
     let evaluation = driver.evaluate(&request)?;
+    let answer = evaluation.response.answers.get(QUESTION_ID);
+    // A refusal is a failure in both output modes: with `--json` too, a
+    // script or a chained hunch must not carry on as if it got an answer.
+    if let Some(Answer::Refusal) = answer {
+        return Err(AppError::Refused);
+    }
 
     let stdout = if cli.json {
         let mut raw = evaluation.raw;
@@ -84,12 +90,7 @@ pub fn run(
         }
         raw
     } else {
-        let answer = evaluation
-            .response
-            .answers
-            .get(QUESTION_ID)
-            .ok_or(AppError::MissingAnswer)?;
-        render::answer(answer)
+        render::answer(answer.ok_or(AppError::MissingAnswer)?)
     };
     let stderr = cli.verbose.then(|| render::usage(&evaluation.response));
     Ok(Output { stdout, stderr })
@@ -106,13 +107,15 @@ pub fn build_request(question: Question, state: Value, model: &str) -> Request {
 }
 
 pub fn noul_question(args: &NoulArgs) -> Question {
-    // Only send `criteria` when at least one side was described; the API
-    // treats a missing object and an empty one alike, but this keeps the
-    // request minimal and readable in logs.
-    let criteria = (args.yes.is_some() || args.no.is_some()).then(|| NoulCriteria {
-        yes: args.yes.clone(),
-        no: args.no.clone(),
-    });
+    // clap only lets `--yes` and `--no` through together, so "one but not
+    // the other" cannot happen here; it would fall into "no criteria".
+    let criteria = match (&args.yes, &args.no) {
+        (Some(yes), Some(no)) => Some(NoulCriteria {
+            yes: yes.clone(),
+            no: no.clone(),
+        }),
+        _ => None,
+    };
     Question::Noul {
         instructions: args.question.clone(),
         criteria,
@@ -309,6 +312,8 @@ pub enum AppError {
     Driver(DriverError),
     /// The response did not contain an answer for our question.
     MissingAnswer,
+    /// The model declined to answer (OpenAI's Decisions API can do this).
+    Refused,
     /// Writing the output failed.
     Output(io::Error),
 }
@@ -325,7 +330,10 @@ impl AppError {
             | AppError::NoState
             | AppError::EmptyState
             | AppError::ReadState { .. } => 2,
-            AppError::Driver(_) | AppError::MissingAnswer | AppError::Output(_) => 1,
+            AppError::Driver(_)
+            | AppError::MissingAnswer
+            | AppError::Refused
+            | AppError::Output(_) => 1,
         }
     }
 }
@@ -343,10 +351,15 @@ impl fmt::Display for AppError {
             AppError::ReadState { from, source } => {
                 write!(f, "could not read state from {from}: {source}")
             }
+            // The driver knows nothing about flags, so the hint lives here.
+            AppError::Driver(err @ DriverError::Timeout { .. }) => {
+                write!(f, "{err} (wait longer with --timeout SECS)")
+            }
             AppError::Driver(err) => err.fmt(f),
             AppError::MissingAnswer => {
                 write!(f, "the response has no answer for question `{QUESTION_ID}`")
             }
+            AppError::Refused => f.write_str("the model declined to answer this question"),
             AppError::Output(err) => write!(f, "could not write output: {err}"),
         }
     }
@@ -361,7 +374,8 @@ impl std::error::Error for AppError {
             AppError::Usage(_)
             | AppError::NoState
             | AppError::EmptyState
-            | AppError::MissingAnswer => None,
+            | AppError::MissingAnswer
+            | AppError::Refused => None,
         }
     }
 }
@@ -390,7 +404,7 @@ mod tests {
     use clap::Parser;
     use serde_json::json;
 
-    use crate::wire::{Answer, Evaluation, Response, Usage};
+    use crate::wire::{Evaluation, Response, Usage};
 
     /// A driver that never touches the network: it records the request it
     /// was given and replies with a canned result.
@@ -486,7 +500,16 @@ mod tests {
     fn builds_noul_request_with_criteria() {
         let driver = FakeDriver::answering(noul_answer());
         run_args(
-            &["noul", "Urgent?", "--yes", "Time-sensitive", "--state", "x"],
+            &[
+                "noul",
+                "Urgent?",
+                "--yes",
+                "Time-sensitive",
+                "--no",
+                "Can wait",
+                "--state",
+                "x",
+            ],
             &driver,
         )
         .unwrap();
@@ -496,8 +519,8 @@ mod tests {
             Question::Noul {
                 instructions: "Urgent?".into(),
                 criteria: Some(NoulCriteria {
-                    yes: Some("Time-sensitive".into()),
-                    no: None,
+                    yes: "Time-sensitive".into(),
+                    no: "Can wait".into(),
                 }),
             }
         );
@@ -725,6 +748,19 @@ mod tests {
         let err = run_args(&["noul", "q", "--state", "x"], &driver).unwrap_err();
         assert!(matches!(err, AppError::MissingAnswer));
         assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn refusal_is_a_runtime_error_in_both_output_modes() {
+        for args in [
+            &["noul", "q", "--state", "x"][..],
+            &["--json", "noul", "q", "--state", "x"][..],
+        ] {
+            let driver = FakeDriver::answering(Answer::Refusal);
+            let err = run_args(args, &driver).unwrap_err();
+            assert!(matches!(err, AppError::Refused), "{args:?}: {err:?}");
+            assert_eq!(err.exit_code(), 1);
+        }
     }
 
     // --- hunch config -------------------------------------------------------

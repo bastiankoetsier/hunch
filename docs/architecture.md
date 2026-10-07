@@ -28,7 +28,7 @@ flowchart LR
 | `src/app.rs` | Validates the question, reads the state, calls the driver, picks the output |
 | `src/render.rs` | Pure functions from an answer to text |
 | `src/config.rs` | Layered settings resolution |
-| `src/wire.rs` | Serde types for `POST /v1/systemone` |
+| `src/wire.rs` | Serde types for the System One request format (TypeSafe's `/v1/systemone`, OpenRouter's `/api/alpha/decisions`) |
 | `src/driver/mod.rs` | `Driver` trait, `DriverKind`, `DriverError`, `build` |
 | `src/driver/retry.rs` | Retry decorator |
 | `src/driver/http.rs` | Shared HTTP transport and status-to-error mapping |
