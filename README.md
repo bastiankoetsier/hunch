@@ -105,6 +105,15 @@ OpenRouter's Decisions router (`POST /api/alpha/decisions`). Both take the same
 request format. Every setting is resolved left to right, first hit wins; empty
 values count as unset.
 
+> [!CAUTION]
+> **The `openrouter` driver uses an alpha endpoint.** OpenRouter lists its
+> [Decisions router](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request)
+> under `/api/alpha/`, so its request format, answers or availability may
+> change without notice, and hunch may break until it catches up. If
+> `--driver openrouter` suddenly fails with a 404 or a validation error, that
+> is the likely cause. For Jev, the `typesafe` driver uses TypeSafe's stable
+> API and is not affected.
+
 | Setting     | 1. flag    | 2. environment                              | 3. config file                     | 4. default                   |
 | ----------- | ---------- | ------------------------------------------- | ---------------------------------- | ---------------------------- |
 | driver      | `--driver` | `HUNCH_DRIVER`                              | top-level `driver`                 | `typesafe`                   |
@@ -119,9 +128,10 @@ an error.
 
 ### Other decision models
 
-OpenRouter's Decisions router (an alpha endpoint) serves every decision model
-on OpenRouter in the same request format, so with the `openrouter` driver the
-model id alone picks which one answers. For example, OpenAI's
+OpenRouter's Decisions router ([an alpha endpoint](#drivers-and-precedence))
+serves every decision model on OpenRouter in the same request format, so with
+the `openrouter` driver the model id alone picks which one answers. For
+example, OpenAI's
 [GPT-6 Luna Decisions](https://developers.openai.com/api/docs/guides/decisions):
 
 ```console
